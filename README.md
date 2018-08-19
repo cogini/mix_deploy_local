@@ -1,6 +1,15 @@
-# MixDeployLocal
+# mix_deploy_local
 
-**TODO: Add description**
+This module provides mix tasks which deploy a release to the local machine.
+
+It uses a structure similar to [Capistrano](https://capistranorb.com/documentation/getting-started/structure/).
+
+It creates a base directory, by default `/srv/:app`, where `:app` is
+the name of the application with underscores replaced by dashes.
+
+Under that, the `releases` directory holds the files from the release
+in a directory named with the current timestamp, e.g. `/srv/example-app/releases/20180628115441`.
+It makes a symlink from the release tirectory to `/srv/example-app/current`.
 
 ## Installation
 
@@ -15,7 +24,36 @@ def deps do
 end
 ```
 
+## Configuration
+
+This module looks for configuration in the
+mix project under the `mix_deploy_local` key.
+
+`base_path` sets the base directory, default `/srv`.
+
+`deploy_path` sets the target directory completely manually, ignoring `base_path` and `app`.
+
+```elixir
+def project do
+[
+  app: :example_app,
+  version: "0.1.0",
+  elixir: "~> 1.6",
+  start_permanent: Mix.env() == :prod,
+  deps: deps(),
+  mix_deploy_local: [
+    deploy_path: "/my/special/place/myapp"
+  ]
+]
+end
+```
+
+## Usage
+
+```shell
+mix deploy.local
+```
+
 Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at [https://hexdocs.pm/mix_deploy_local](https://hexdocs.pm/mix_deploy_local).
-
