@@ -1,6 +1,7 @@
 # mix_deploy_local
 
-This module provides mix tasks which deploy a release to the local machine.
+This module provides mix tasks which deploy a
+[Distillery](https://github.com/bitwalker/distillery) release to the local machine.
 
 It uses a structure similar to [Capistrano](https://capistranorb.com/documentation/getting-started/structure/).
 
@@ -19,6 +20,7 @@ by adding `mix_deploy_local` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
+    {:distillery, "~> 2.0"},
     {:mix_deploy_local, "~> 0.1.0"}
   ]
 end
