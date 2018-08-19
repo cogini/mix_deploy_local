@@ -32,12 +32,14 @@ defmodule Mix.Tasks.Deploy.Local do
 
   use Mix.Task
 
+  @spec run(OptionParser.argv()) :: no_return
   def run(args) do
     # IO.puts (inspect args)
     config = parse_args(args)
     deploy_release(config)
   end
 
+  @spec deploy_release(Keyword.t) :: no_return
   def deploy_release(config) do
     ts = create_timestamp()
     release_path = Path.join(config[:releases_path], ts)
@@ -63,7 +65,13 @@ defmodule Mix.Tasks.Deploy.Local do
   end
 
   def parse_args(argv) do
-    {_args, _, _} = OptionParser.parse(argv)
+    opts = [
+      strict: [
+        version: :string,
+      ]
+    ]
+    {overrides, _} = OptionParser.parse!(argv, opts)
+
     mix_config = Mix.Project.config()
     user_config = mix_config[:config] || []
 
@@ -81,7 +89,9 @@ defmodule Mix.Tasks.Deploy.Local do
       deploy_path: "#{base_path}/#{ext_name}",
       build_path: Mix.Project.build_path(),
     ]
-    config = Keyword.merge(defaults, user_config)
+    config = defaults
+             |> Keyword.merge(user_config)
+             |> Keyword.merge(overrides)
 
     Keyword.merge(config, [
       releases_path: Path.join(config[:deploy_path], "releases"),
