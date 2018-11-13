@@ -239,7 +239,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
       for file <- files do
         src_path = Path.join(systemd_src_dir, file)
         dst_path = Path.join("/lib/systemd/system", file)
-        Mix.shell.info "Copying systemd unit from #{src_path} to #{dst_path}"
+        Mix.shell.info "# Copying systemd unit from #{src_path} to #{dst_path}"
         :ok = copy_file(config, src_path, dst_path)
         own_file(config, dst_path, 0, 0, 0o644)
         if config[:sudo] do
@@ -264,7 +264,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     output_file = Path.join(output_dir, file)
     target_file = Path.join(path, file)
 
-    Mix.shell.info "Creating file #{target_file} from template #{template}"
+    Mix.shell.info "# Creating file #{target_file} from template #{template}"
     write_template(config, output_dir, file, template)
     :ok = copy_file(config, output_file, target_file)
     own_file(config, target_file, uid, gid, mode)
@@ -317,7 +317,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
 
   @spec create_dir(Keyword.t, Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
   def create_dir(config, path, uid, gid, mode) do
-    Mix.shell.info "Creating dir #{path}"
+    Mix.shell.info "# Creating dir #{path}"
     if config[:sudo] do
       :ok = File.mkdir_p(path)
     else
@@ -331,7 +331,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     if config[test_key] do
       dir = config[dir_key] || config[:ext_name]
       path = config[path_key] || Path.join(default_prefix, dir)
-      Mix.shell.info "Creating dir #{path}"
+      Mix.shell.info "# Creating dir #{path}"
       create_dir(config, path, uid, gid, mode)
     end
   end
