@@ -287,7 +287,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
   end
 
   @spec create_dir(Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
-  def create_dir(path, uid, gid, mode = 0o700) do
+  def create_dir(path, uid, gid, mode) do
     Mix.shell.info "Creating #{path}"
     :ok = File.mkdir_p(path)
     :ok = File.chown(path, uid)
