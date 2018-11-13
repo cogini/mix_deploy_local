@@ -251,7 +251,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     end
   end
 
-  @spec copy_file(Keyword.t, Path.t, Path.t) :: ok
+  @spec copy_file(Keyword.t, Path.t, Path.t) :: :ok
   def copy_file(config, src_path, dst_path) do
     if config[:sudo] do
       :ok = File.cp(src_path, dst_path)
