@@ -224,9 +224,9 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     maybe_create_dir(config, :create_cache_dir, :cache_dir, :cache_path, "/var/cache", app_uid, app_gid, 0o700)
     maybe_create_dir(config, :create_runtime_dir, :runtime_dir, :runtime_path, "/run", app_uid, app_gid, 0o750)
 
-    remote_console_path = Path.join(config[:scripts_dir], "remote_console.sh")
+    remote_console_path = Path.join(config[:scripts_path], "remote_console.sh")
     Mix.shell.info "Creating #{remote_console_path}"
-    write_template(config, config[:scripts_dir], "remote_console.sh")
+    write_template(config, config[:scripts_path], "remote_console.sh")
     own_file(remote_console_path, deploy_uid, app_gid, 0o750)
 
     if config[:systemd] do
