@@ -32,6 +32,8 @@ defmodule Mix.Tasks.Deploy.Local do
 
   use Mix.Task
 
+  @template_dest "mix_deploy_local"
+
   @spec run(OptionParser.argv()) :: no_return
   def run(args) do
     # IO.puts (inspect args)
@@ -82,6 +84,8 @@ defmodule Mix.Tasks.Deploy.Local do
 
     base_path = user_config[:base_path] || "/srv"
 
+    build_path = Mix.Project.build_path()
+
     defaults = [
       mix_env: Mix.env(),
       env_lang: "en_US.UTF-8",
@@ -94,7 +98,8 @@ defmodule Mix.Tasks.Deploy.Local do
       # Directory where release will be extracted on target
       deploy_path: "#{base_path}/#{ext_name}",
       runtime_path: "/run/#{ext_name}",
-      build_path: Mix.Project.build_path(),
+      build_path: build_path,
+      template_output_path: Path.join(build_path, @template_dest)
       deploy_user: "deploy",
       app_user: "app",
 
@@ -224,10 +229,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     maybe_create_dir(config, :create_cache_dir, :cache_dir, :cache_path, "/var/cache", app_uid, app_gid, 0o700)
     maybe_create_dir(config, :create_runtime_dir, :runtime_dir, :runtime_path, "/run", app_uid, app_gid, 0o750)
 
-    remote_console_path = Path.join(config[:scripts_path], "remote_console.sh")
-    Mix.shell.info "Creating #{remote_console_path}"
-    write_template(config, config[:scripts_path], "remote_console.sh")
-    own_file(config, remote_console_path, deploy_uid, app_gid, 0o750)
+    copy_template(config, config[:scripts_path], "remote_console.sh", deploy_uid, app_gid, 0o750)
 
     if config[:systemd] do
       # Copy systemd files
@@ -237,24 +239,40 @@ defmodule Mix.Tasks.Deploy.Local.Init do
         src_path = Path.join(systemd_src_dir, file)
         dst_path = Path.join("/lib/systemd/system", file)
         Mix.shell.info "Copying systemd unit from #{src_path} to #{dst_path}"
-        copy_file(config, src_path, dst_path)
+        :ok = copy_file(config, src_path, dst_path)
         own_file(config, dst_path, 0, 0, 0o644)
-        {_, 0} = System.cmd("systemctl", ["enable", file])
+        if config[:sudo] do
+          {_, 0} = System.cmd("systemctl", ["enable", file])
+        else
+          Mix.shell.info "sudo systemctl enable #{file}"
+        end
       end
     end
 
     if config[:sudo_deploy] or config[:sudo_app] do
-      dst_path = "/etc/sudoers.d/#{ext_name}"
-      Mix.shell.info "Creating #{dst_path}"
-      write_template(config, "/etc/sudoers.d", "sudoers", ext_name)
-      own_file(config, dst_path, 0, 0, 0o600)
+      copy_template(config, "/etc/sudoers.d", ext_name, "sudoers", 0, 0, 0o600)
     end
+  end
+
+  def copy_template(config, path, file, uid, gid, mode) do
+    copy_template(config, path, file, file, uid, gid, mode)
+  end
+
+  def copy_template(config, path, file, template, uid, gid, mode)
+    output_dir = Path.join(config[:template_output_path], path)
+    output_file = Path.join(output_dir, file)
+    target_file = Path.join(path, file)
+    Mix.shell.info "Creating #{target_file}"
+
+    write_template(config, output_dir, file, template)
+    :ok = copy_file(config, output_file, target_file)
+    own_file(config, target_file, uid, gid, mode)
   end
 
   @spec copy_file(Keyword.t, Path.t, Path.t) :: :ok
   def copy_file(config, src_path, dst_path) do
     if config[:sudo] do
-      :ok = File.cp(src_path, dst_path)
+      File.cp(src_path, dst_path)
     else
       Mix.shell.info "sudo cp #{src_path} #{dst_path}"
       :ok
@@ -324,7 +342,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
       :ok = File.chgrp(path, gid)
       :ok = File.chmod(path, mode)
     else
-      Mix.shell.info "sudo chown #{uid}#{gid} #{path}"
+      Mix.shell.info "sudo chown #{uid}:#{gid} #{path}"
       Mix.shell.info "sudo chmod #{Integer.to_string(mode, 8)} #{path}"
     end
   end
@@ -336,6 +354,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
 
   @spec write_template(Keyword.t, Path.t, String.t, Path.t) :: :ok
   def write_template(config, target_path, template, filename) do
+    :ok = File.mkdir_p(target_path)
     {:ok, data} = template_name(template, config)
     :ok = File.write(Path.join(target_path, filename), data)
   end
