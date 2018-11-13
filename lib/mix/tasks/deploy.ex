@@ -300,7 +300,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
   def create_dir(config, path, uid, gid, mode) do
     Mix.shell.info "Creating #{path}"
     if config[:sudo] do
-      File.mkdir_p(path)
+      :ok = File.mkdir_p(path)
     else
       Mix.shell.info "sudo mkdir -p #{path}"
     end
@@ -313,7 +313,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
       dir = config[dir_key] || config[:ext_name]
       path = config[path_key] || Path.join(default_prefix, dir)
       Mix.shell.info "Creating #{path}"
-      create_dir(path, uid, gid, mode)
+      create_dir(config, path, uid, gid, mode)
     end
   end
 
