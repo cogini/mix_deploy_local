@@ -73,21 +73,65 @@ defmodule Mix.Tasks.Deploy.Local do
     {overrides, _} = OptionParser.parse!(argv, opts)
 
     mix_config = Mix.Project.config()
-    user_config = mix_config[:config] || []
+    user_config = mix_config[:mix_deploy_local] || []
 
-    ext_name = mix_config[:app]
+    app_name = mix_config[:app]
+    ext_name = app_name
                |> to_string
                |> String.replace("_", "-")
 
     base_path = user_config[:base_path] || "/srv"
 
     defaults = [
-      app: mix_config[:app],
+      mix_env: Mix.env(),
+      env_lang: "en_US.UTF-8",
+      app_name: app_name,
+      # Name of service files and directories
       ext_name: ext_name,
       version: mix_config[:version],
+      # Base directory on target system
       base_path: base_path,
+      # Directory where release will be extracted on target
       deploy_path: "#{base_path}/#{ext_name}",
+      runtime_path: "/run/#{ext_name}",
       build_path: Mix.Project.build_path(),
+      deploy_user: "deploy",
+      app_user: "app",
+
+      # App uses conform
+      conform: false,
+      conform_conf_path: "/etc/#{ext_name}/#{app_name}.conf",
+
+      # App uses mix_systemd
+      systemd: false,
+
+      # Create /etc/suders.d config file allowing deploy or app user to restart
+      sudo_deploy: false,
+      sudo_app: false,
+
+      # These directories may be automatically created by newer versions of
+      # systemd, otherwise we need to create them if necessary
+
+      create_conf_dir: false,
+      # conf_dir: default :ext_name
+      # conf_path: default /etc/:conf_dir
+      create_logs_dir: false,
+      # log_dir: default :ext_name
+      # log_path: default /var/log/:conf_dir
+      create_tmp_dir: false,
+      # tmp_dir: default :ext_name
+      # tmp_path: default /var/tmp/:tmp_dir
+      create_state_dir: false,
+      # state_dir: default :ext_name
+      # state_path: default /var/lib/:state_dir
+      create_cache_dir: false,
+      # cache_dir: default :ext_name
+      # cache_path: default /var/lib/:cache_dir
+      create_runtime_dir: false,
+      # runtime_dir: default :ext_name
+      # runtime_path: default /run/:runtime_dir
+
+      restart_method: :systemd_flag, # :systemd_flag | :systemctl | :touch
     ]
     config = defaults
              |> Keyword.merge(user_config)
@@ -95,7 +139,9 @@ defmodule Mix.Tasks.Deploy.Local do
 
     Keyword.merge(config, [
       releases_path: Path.join(config[:deploy_path], "releases"),
-      current_link: Path.join(config[:deploy_path], "current"),
+      scripts_path: Path.join(config[:deploy_path], "scripts"),
+      flags_path: Path.join(config[:deploy_path], "flags"),
+      current_path: Path.join(config[:deploy_path], "current"),
     ])
   end
 
@@ -120,38 +166,184 @@ defmodule Mix.Tasks.Deploy.Local.Rollback do
 
   def rollback([_current, prev | _rest], config) do
     release_path = Path.join(config[:releases_path], prev)
-    IO.puts "Making link from #{release_path} to #{config[:current_link]}"
-    remove_link(config[:current_link])
-    File.ln_s(release_path, config[:current_link])
+    current_path = config[:current_path]
+    IO.puts "Making link from #{release_path} to #{current_path}"
+    remove_link(current_path)
+    File.ln_s(release_path, current_path)
   end
   def rollback(dirs, _config) do
     IO.puts "Nothing to roll back to: releases = #{inspect dirs}"
   end
 
-  def remove_link(current_link) do
-    case File.read_link(current_link) do
+  def remove_link(current_path) do
+    case File.read_link(current_path) do
       {:ok, target} ->
-        IO.puts "Removing link from #{target} to #{current_link}"
-        :ok = File.rm(current_link)
+        IO.puts "Removing link from #{target} to #{current_path}"
+        :ok = File.rm(current_path)
       {:error, _reason} ->
-        IO.puts "No current link #{current_link}"
+        IO.puts "No current link #{current_path}"
     end
   end
 
 end
 
 defmodule Mix.Tasks.Deploy.Local.Init do
-  @shortdoc "Create directory structure for local deploy"
+  @shortdoc "Create directory structure and files for local deploy"
 
-  @moduledoc """
-  Create directory structure for local deploy.
-  """
+  @moduledoc "Create directory structure and files for local deploy."
 
   use Mix.Task
 
+  @template_dir "mix_deploy_local"
+  @app :mix_deploy_local
+
   def run(args) do
     config = Mix.Tasks.Deploy.Local.parse_args(args)
-    File.mkdir_p!(config[:base_dir])
+
+    ext_name = config[:ext_name]
+
+    deploy_user = config[:deploy_user]
+    # deploy_group = config[:deploy_group] || deploy_user
+    app_user = config[:app_user]
+    app_group = config[:app_group] || app_user
+
+    {:ok, %{uid: deploy_uid}} = get_user_info(deploy_user)
+    # {:ok, %{gid: deploy_gid}} = get_group_info(deploy_group)
+    {:ok, %{uid: app_uid}} = get_user_info(app_user)
+    {:ok, %{gid: app_gid}} = get_group_info(app_group)
+
+    create_dir(config.deploy_path,   deploy_uid, app_gid, 0o750)
+    create_dir(config.releases_path, deploy_uid, app_gid, 0o750)
+    create_dir(config.scripts_path,  deploy_uid, app_gid, 0o750)
+    create_dir(config.flags_path,    deploy_uid, app_gid, 0o770) # check perms
+
+    maybe_create_dir(config, :create_conf_dir, :conf_dir, :conf_path, "/etc", deploy_uid, app_gid, 0o750)
+    maybe_create_dir(config, :create_logs_dir, :logs_dir, :logs_path, "/var/log", app_uid, app_gid, 0o700)
+    maybe_create_dir(config, :create_tmp_dir, :tmp_dir, :tmp_path, "/var/tmp", app_uid, app_gid, 0o700)
+    maybe_create_dir(config, :create_state_dir, :state_dir, :state_path, "/var/lib", app_uid, app_gid, 0o700)
+    maybe_create_dir(config, :create_cache_dir, :cache_dir, :cache_path, "/var/cache", app_uid, app_gid, 0o700)
+    maybe_create_dir(config, :create_runtime_dir, :runtime_dir, :runtime_path, "/run", app_uid, app_gid, 0o750)
+
+    remote_console_path = Path.join(config.scripts_dir, "remote_console.sh")
+    Mix.shell.info "Creating #{remote_console_path}"
+    write_template(config, config.scripts_dir, "remote_console.sh")
+    own_file(remote_console_path, deploy_uid, app_gid, 0o750)
+
+    if config[:systemd] do
+      # Copy systemd files
+      systemd_src_dir = Path.join(config.build_path, "systemd/lib/systemd/system")
+      {:ok, files} = File.ls(systemd_src_dir)
+      for file <- files do
+        src_path = Path.join(systemd_src_dir, file)
+        dst_path = Path.join("/lib/systemd/system", file)
+        Mix.shell.info "Copying systemd unit from #{src_path} to #{dst_path}"
+        :ok = File.cp(src_path, dst_path)
+        own_file(dst_path, 0, 0, 0o644)
+        {_, 0} = System.cmd("systemctl", ["enable", file])
+      end
+    end
+
+    if config[:sudo_deploy] or config[:sudo_app] do
+      dst_path = "/etc/sudoers.d/#{ext_name}"
+      Mix.shell.info "Creating #{dst_path}"
+      write_template(config, "/etc/sudoers.d", "sudoers", ext_name)
+      own_file(dst_path, 0, 0, 0o600)
+    end
+  end
+
+  @spec get_user_info(binary) :: map | :error
+  def get_user_info(name) do
+    case System.cmd("getent", ["passwd", name]) do
+      {data, 0} ->
+        # "jake:x:1003:1005:ansible-jake:/home/jake:/bin/bash\n"
+        [name, _pw, uid, gid, gecos, home, shell] = String.split(String.trim(data), ":")
+        {:ok, %{
+          user: name,
+          uid: String.to_integer(uid),
+          gid: String.to_integer(gid),
+          gecos: gecos,
+          home: home,
+          shell: shell
+        }}
+      {_, 2} ->
+        {:error, :not_found}
+    end
+  end
+
+  @spec get_group_info(binary) :: map | :error
+  def get_group_info(name) do
+    case System.cmd("getent", ["group", name]) do
+      {field_bin, 0} ->
+        # "wheel:x:10:jake,foo\n"
+        [name, _pw, gid, member_bin] = String.split(String.trim(field_bin), ":")
+        members = case member_bin do
+          "" -> []
+          _ -> String.split(member_bin, ",")
+        end
+        {:ok, %{name: name, gid: String.to_integer(gid), members: members}}
+      {_, 2} ->
+        {:error, :not_found}
+    end
+  end
+
+  @spec create_dir(Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
+  def create_dir(path, uid, gid, mode = 0o700) do
+    Mix.shell.info "Creating #{path}"
+    :ok = File.mkdir_p(path)
+    :ok = File.chown(path, uid)
+    :ok = File.chgrp(path, gid)
+    :ok = File.chmod(path, mode)
+  end
+
+  @spec maybe_create_dir(Keyword.t, atom, atom, atom, String.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
+  def maybe_create_dir(config, test_key, dir_key, path_key, default_prefix, uid, gid, mode) do
+    if config[test_key] do
+      dir = config[dir_key] || config[:ext_name]
+      path = config[path_key] || Path.join(default_prefix, dir)
+      Mix.shell.info "Creating #{path}"
+      create_dir(path, uid, gid, mode)
+    end
+  end
+
+  @spec own_file(Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
+  def own_file(path, uid, gid, mode) do
+    :ok = File.chown(path, uid)
+    :ok = File.chgrp(path, gid)
+    :ok = File.chmod(path, mode)
+  end
+
+  @spec write_template(Keyword.t, Path.t, String.t) :: :ok
+  def write_template(config, target_path, template) do
+    write_template(config, target_path, template, template)
+  end
+
+  @spec write_template(Keyword.t, Path.t, String.t, Path.t) :: :ok
+  def write_template(config, target_path, template, filename) do
+    {:ok, data} = template_name(template, config)
+    :ok = File.write(Path.join(target_path, filename), data)
+  end
+
+  @spec template_name(Path.t, Keyword.t) :: {:ok, String.t} | {:error, term}
+  def template_name(name, params \\ []) do
+    template_name = "#{name}.eex"
+    template_path = params[:template_path] || @template_dir
+    override_path = Path.join([template_path, template_name])
+    if File.exists?(override_path) do
+      template_path(override_path)
+    else
+      Application.app_dir(@app, Path.join("priv", "templates"))
+      |> Path.join(template_name)
+      |> template_path(params)
+    end
+  end
+
+  @doc "Eval template with params"
+  @spec template_path(String.t, Keyword.t) :: {:ok, String.t} | {:error, term}
+  def template_path(template_path, params \\ []) do
+    {:ok, EEx.eval_file(template_path, params, [trim: true])}
+  rescue
+    e ->
+      {:error, {:template, e}}
   end
 
 end
