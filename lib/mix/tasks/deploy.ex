@@ -212,10 +212,10 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     {:ok, %{uid: app_uid}} = get_user_info(app_user)
     {:ok, %{gid: app_gid}} = get_group_info(app_group)
 
-    create_dir(config.deploy_path,   deploy_uid, app_gid, 0o750)
-    create_dir(config.releases_path, deploy_uid, app_gid, 0o750)
-    create_dir(config.scripts_path,  deploy_uid, app_gid, 0o750)
-    create_dir(config.flags_path,    deploy_uid, app_gid, 0o770) # check perms
+    create_dir(config[:deploy_path],   deploy_uid, app_gid, 0o750)
+    create_dir(config[:releases_path], deploy_uid, app_gid, 0o750)
+    create_dir(config[:scripts_path],  deploy_uid, app_gid, 0o750)
+    create_dir(config[:flags_path],    deploy_uid, app_gid, 0o770) # check perms
 
     maybe_create_dir(config, :create_conf_dir, :conf_dir, :conf_path, "/etc", deploy_uid, app_gid, 0o750)
     maybe_create_dir(config, :create_logs_dir, :logs_dir, :logs_path, "/var/log", app_uid, app_gid, 0o700)
@@ -224,14 +224,14 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     maybe_create_dir(config, :create_cache_dir, :cache_dir, :cache_path, "/var/cache", app_uid, app_gid, 0o700)
     maybe_create_dir(config, :create_runtime_dir, :runtime_dir, :runtime_path, "/run", app_uid, app_gid, 0o750)
 
-    remote_console_path = Path.join(config.scripts_dir, "remote_console.sh")
+    remote_console_path = Path.join(config[:scripts_dir], "remote_console.sh")
     Mix.shell.info "Creating #{remote_console_path}"
-    write_template(config, config.scripts_dir, "remote_console.sh")
+    write_template(config, config[:scripts_dir], "remote_console.sh")
     own_file(remote_console_path, deploy_uid, app_gid, 0o750)
 
     if config[:systemd] do
       # Copy systemd files
-      systemd_src_dir = Path.join(config.build_path, "systemd/lib/systemd/system")
+      systemd_src_dir = Path.join(config[:build_path], "systemd/lib/systemd/system")
       {:ok, files} = File.ls(systemd_src_dir)
       for file <- files do
         src_path = Path.join(systemd_src_dir, file)
