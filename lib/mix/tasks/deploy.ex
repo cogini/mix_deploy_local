@@ -115,6 +115,8 @@ defmodule Mix.Tasks.Deploy.Local do
       sudo_deploy: false,
       sudo_app: false,
 
+      exec: false,
+
       # These directories may be automatically created by newer versions of
       # systemd, otherwise we need to create them if necessary
 
@@ -242,10 +244,10 @@ defmodule Mix.Tasks.Deploy.Local.Init do
         Mix.shell.info "# Copying systemd unit from #{src_path} to #{dst_path}"
         :ok = copy_file(config, src_path, dst_path)
         own_file(config, dst_path, 0, 0, 0o644)
-        if config[:sudo] do
+        if config[:exec] do
           {_, 0} = System.cmd("systemctl", ["enable", file])
         else
-          Mix.shell.info "sudo systemctl enable #{file}"
+          Mix.shell.info "systemctl enable #{file}"
         end
       end
     end
@@ -272,10 +274,10 @@ defmodule Mix.Tasks.Deploy.Local.Init do
 
   @spec copy_file(Keyword.t, Path.t, Path.t) :: :ok
   def copy_file(config, src_path, dst_path) do
-    if config[:sudo] do
+    if config[:exec] do
       File.cp(src_path, dst_path)
     else
-      Mix.shell.info "sudo cp #{src_path} #{dst_path}"
+      Mix.shell.info "cp #{src_path} #{dst_path}"
       :ok
     end
   end
@@ -318,10 +320,10 @@ defmodule Mix.Tasks.Deploy.Local.Init do
   @spec create_dir(Keyword.t, Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
   def create_dir(config, path, uid, gid, mode) do
     Mix.shell.info "# Creating dir #{path}"
-    if config[:sudo] do
+    if config[:exec] do
       :ok = File.mkdir_p(path)
     else
-      Mix.shell.info "sudo mkdir -p #{path}"
+      Mix.shell.info "mkdir -p #{path}"
     end
     own_file(config, path, uid, gid, mode)
   end
@@ -338,13 +340,13 @@ defmodule Mix.Tasks.Deploy.Local.Init do
 
   @spec own_file(Keyword.t, Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
   def own_file(config, path, uid, gid, mode) do
-    if config[:sudo] do
+    if config[:exec] do
       :ok = File.chown(path, uid)
       :ok = File.chgrp(path, gid)
       :ok = File.chmod(path, mode)
     else
-      Mix.shell.info "sudo chown #{uid}:#{gid} #{path}"
-      Mix.shell.info "sudo chmod #{Integer.to_string(mode, 8)} #{path}"
+      Mix.shell.info "chown #{uid}:#{gid} #{path}"
+      Mix.shell.info "chmod #{Integer.to_string(mode, 8)} #{path}"
     end
   end
 
