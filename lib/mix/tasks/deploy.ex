@@ -200,7 +200,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
 
   use Mix.Task
 
-  @template_dir "mix_deploy_local"
+  @template_override_dir "mix_deploy_local"
   @app :mix_deploy_local
 
   def run(args) do
@@ -363,7 +363,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
   @spec template_name(Path.t, Keyword.t) :: {:ok, String.t} | {:error, term}
   def template_name(name, params \\ []) do
     template_name = "#{name}.eex"
-    template_path = params[:template_path] || @template_dir
+    template_path = params[:template_path] || @template_override_dir
     override_path = Path.join([template_path, template_name])
     if File.exists?(override_path) do
       template_path(override_path)
