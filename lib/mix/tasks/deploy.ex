@@ -257,11 +257,11 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     end
   end
 
-  def copy_template(config, path, file, uid, gid, mode) do
-    copy_template(config, path, file, file, uid, gid, mode)
+  def copy_template(config, path, template, uid, gid, mode) do
+    copy_template(config, path, template, template, uid, gid, mode)
   end
 
-  def copy_template(config, path, file, template, uid, gid, mode) do
+  def copy_template(config, path, template, file, uid, gid, mode) do
     output_dir = Path.join(config[:template_output_path], path)
     output_file = Path.join(output_dir, file)
     target_file = Path.join(path, file)
@@ -284,35 +284,70 @@ defmodule Mix.Tasks.Deploy.Local.Init do
 
   @spec get_user_info(binary) :: map | :error
   def get_user_info(name) do
-    case System.cmd("getent", ["passwd", name]) do
-      {data, 0} ->
-        # "jake:x:1003:1005:ansible-jake:/home/jake:/bin/bash\n"
-        [name, _pw, uid, gid, gecos, home, shell] = String.split(String.trim(data), ":")
-        {:ok, %{
-          user: name,
-          uid: String.to_integer(uid),
-          gid: String.to_integer(gid),
-          gecos: gecos,
-          home: home,
-          shell: shell
-        }}
-      {_, 2} ->
-        {:error, :not_found}
-    end
+    {:ok, record} = get_passwd(:os.type(), name)
+    # "jake:x:1003:1005:ansible-jake:/home/jake:/bin/bash\n"
+    [name, pw, uid, gid, gecos, home, shell] = String.split(String.trim(record), ":")
+    {:ok, %{
+      user: name,
+      password: pw,
+      uid: String.to_integer(uid),
+      gid: String.to_integer(gid),
+      gecos: gecos,
+      home: home,
+      shell: shell
+    }}
   end
 
   @spec get_group_info(binary) :: map | :error
   def get_group_info(name) do
-    case System.cmd("getent", ["group", name]) do
-      {field_bin, 0} ->
-        # "wheel:x:10:jake,foo\n"
-        [name, _pw, gid, member_bin] = String.split(String.trim(field_bin), ":")
-        members = case member_bin do
-          "" -> []
-          _ -> String.split(member_bin, ",")
-        end
-        {:ok, %{name: name, gid: String.to_integer(gid), members: members}}
-      {_, 2} ->
+    {:ok, record} = get_group(:os.type(), name)
+    # "wheel:x:10:jake,foo\n"
+    [name, pw, gid, member_bin] = String.split(String.trim(record), ":")
+    members = case member_bin do
+      "" -> []
+      _ -> String.split(member_bin, ",")
+    end
+    {:ok, %{name: name, password: pw, gid: String.to_integer(gid), members: members}}
+  end
+
+  def get_passwd({:unix, :linux}, name) do
+    {data, 0} = System.cmd("getent", ["passwd", name])
+    {:ok, data}
+  end
+  def get_passwd({:unix, :darwin}, name) do
+    path = "/Users/#{name}"
+    values = for key <- ["UniqueID", "PrimaryGroupID", "RealName", "NFSHomeDirectory", "UserShell"] do
+      {:ok, value} = dscl_read(path, key)
+      value
+    end 
+    {:ok, Enum.join([name, "x"] ++ values, ":") <> "\n"}
+  end
+
+  def get_group({:unix, :linux}, name) do
+    {data, 0} = System.cmd("getent", ["group", name])
+    {:ok, data}
+  end
+  def get_group({:unix, :darwin}, name) do
+    path = "/Groups/#{name}"
+    {:ok, gid} = dscl_read(path, "PrimaryGroupID")
+    {:ok, members_bin} = dscl_read(path, "GroupMembership")
+
+    members = case members_bin do
+      "" ->
+        ""
+      _ ->
+        Enum.join(Regex.split(~r/\s+/, String.trim(members_bin), trim: true), ",")
+    end
+    {:ok, Enum.join([name, "x", gid, members], ":") <> "\n"}
+  end
+
+  @spec dscl_read(binary, binary) :: binary
+  def dscl_read(path, key) do
+    case System.cmd("dscl", ["-q", ".", "-read", path, key]) do
+      {data, 0} -> 
+        [key, value] = Regex.split(~r/\s+/, String.trim(data), multiline: true, parts: 2)
+        {:ok, value}
+      _ ->
         {:error, :not_found}
     end
   end
