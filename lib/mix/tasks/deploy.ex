@@ -259,7 +259,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     copy_template(config, path, file, file, uid, gid, mode)
   end
 
-  def copy_template(config, path, file, template, uid, gid, mode)
+  def copy_template(config, path, file, template, uid, gid, mode) do
     output_dir = Path.join(config[:template_output_path], path)
     output_file = Path.join(output_dir, file)
     target_file = Path.join(path, file)
