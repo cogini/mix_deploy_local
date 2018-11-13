@@ -102,7 +102,6 @@ defmodule Mix.Tasks.Deploy.Local do
       build_path: build_path,
       template_output_path: Path.join(build_path, @template_output_dir),
       deploy_user: "deploy",
-      app_user: "app",
 
       # App uses conform
       conform: false,
@@ -212,7 +211,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
 
     deploy_user = config[:deploy_user]
     # deploy_group = config[:deploy_group] || deploy_user
-    app_user = config[:app_user]
+    app_user = config[:app_user] || deploy_user
     app_group = config[:app_group] || app_user
 
     {:ok, %{uid: deploy_uid}} = get_user_info(deploy_user)
