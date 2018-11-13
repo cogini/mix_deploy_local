@@ -344,7 +344,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
   def dscl_read(path, key) do
     case System.cmd("dscl", ["-q", ".", "-read", path, key]) do
       {data, 0} -> 
-        [key, value] = Regex.split(~r/\s+/, String.trim(data), multiline: true, parts: 2)
+        [_key, value] = Regex.split(~r/\s+/, String.trim(data), multiline: true, parts: 2)
         {:ok, value}
       _ ->
         {:error, :not_found}
