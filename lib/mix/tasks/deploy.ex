@@ -32,7 +32,8 @@ defmodule Mix.Tasks.Deploy.Local do
 
   use Mix.Task
 
-  @template_dest "mix_deploy_local"
+  # Location under build directory
+  @template_output_dir "mix_deploy_local"
 
   @spec run(OptionParser.argv()) :: no_return
   def run(args) do
@@ -99,7 +100,7 @@ defmodule Mix.Tasks.Deploy.Local do
       deploy_path: "#{base_path}/#{ext_name}",
       runtime_path: "/run/#{ext_name}",
       build_path: build_path,
-      template_output_path: Path.join(build_path, @template_dest)
+      template_output_path: Path.join(build_path, @template_output_dir),
       deploy_user: "deploy",
       app_user: "app",
 
