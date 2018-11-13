@@ -296,7 +296,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     end
   end
 
-  @spec create_dir(Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
+  @spec create_dir(Keyword.t, Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
   def create_dir(config, path, uid, gid, mode) do
     Mix.shell.info "Creating #{path}"
     if config[:sudo] do
