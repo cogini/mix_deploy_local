@@ -212,10 +212,10 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     {:ok, %{uid: app_uid}} = get_user_info(app_user)
     {:ok, %{gid: app_gid}} = get_group_info(app_group)
 
-    create_dir(config[:deploy_path],   deploy_uid, app_gid, 0o750)
-    create_dir(config[:releases_path], deploy_uid, app_gid, 0o750)
-    create_dir(config[:scripts_path],  deploy_uid, app_gid, 0o750)
-    create_dir(config[:flags_path],    deploy_uid, app_gid, 0o770) # check perms
+    create_dir(config, config[:deploy_path],   deploy_uid, app_gid, 0o750)
+    create_dir(config, config[:releases_path], deploy_uid, app_gid, 0o750)
+    create_dir(config, config[:scripts_path],  deploy_uid, app_gid, 0o750)
+    create_dir(config, config[:flags_path],    deploy_uid, app_gid, 0o770) # check perms
 
     maybe_create_dir(config, :create_conf_dir, :conf_dir, :conf_path, "/etc", deploy_uid, app_gid, 0o750)
     maybe_create_dir(config, :create_logs_dir, :logs_dir, :logs_path, "/var/log", app_uid, app_gid, 0o700)
@@ -227,7 +227,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     remote_console_path = Path.join(config[:scripts_path], "remote_console.sh")
     Mix.shell.info "Creating #{remote_console_path}"
     write_template(config, config[:scripts_path], "remote_console.sh")
-    own_file(remote_console_path, deploy_uid, app_gid, 0o750)
+    own_file(config, remote_console_path, deploy_uid, app_gid, 0o750)
 
     if config[:systemd] do
       # Copy systemd files
@@ -237,8 +237,8 @@ defmodule Mix.Tasks.Deploy.Local.Init do
         src_path = Path.join(systemd_src_dir, file)
         dst_path = Path.join("/lib/systemd/system", file)
         Mix.shell.info "Copying systemd unit from #{src_path} to #{dst_path}"
-        :ok = File.cp(src_path, dst_path)
-        own_file(dst_path, 0, 0, 0o644)
+        copy_file(config, src_path, dst_path)
+        own_file(config, dst_path, 0, 0, 0o644)
         {_, 0} = System.cmd("systemctl", ["enable", file])
       end
     end
@@ -247,7 +247,17 @@ defmodule Mix.Tasks.Deploy.Local.Init do
       dst_path = "/etc/sudoers.d/#{ext_name}"
       Mix.shell.info "Creating #{dst_path}"
       write_template(config, "/etc/sudoers.d", "sudoers", ext_name)
-      own_file(dst_path, 0, 0, 0o600)
+      own_file(config, dst_path, 0, 0, 0o600)
+    end
+  end
+
+  @spec copy_file(Keyword.t, Path.t, Path.t) :: ok
+  def copy_file(config, src_path, dst_path) do
+    if config[:sudo] do
+      :ok = File.cp(src_path, dst_path)
+    else
+      Mix.shell.info "sudo cp #{src_path} #{dst_path}"
+      :ok
     end
   end
 
@@ -287,12 +297,14 @@ defmodule Mix.Tasks.Deploy.Local.Init do
   end
 
   @spec create_dir(Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
-  def create_dir(path, uid, gid, mode) do
+  def create_dir(config, path, uid, gid, mode) do
     Mix.shell.info "Creating #{path}"
-    :ok = File.mkdir_p(path)
-    :ok = File.chown(path, uid)
-    :ok = File.chgrp(path, gid)
-    :ok = File.chmod(path, mode)
+    if config[:sudo] do
+      File.mkdir_p(path)
+    else
+      Mix.shell.info "sudo mkdir -p #{path}"
+    end
+    own_file(config, path, uid, gid, mode)
   end
 
   @spec maybe_create_dir(Keyword.t, atom, atom, atom, String.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
@@ -305,11 +317,16 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     end
   end
 
-  @spec own_file(Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
-  def own_file(path, uid, gid, mode) do
-    :ok = File.chown(path, uid)
-    :ok = File.chgrp(path, gid)
-    :ok = File.chmod(path, mode)
+  @spec own_file(Keyword.t, Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
+  def own_file(config, path, uid, gid, mode) do
+    if config[:sudo] do
+      :ok = File.chown(path, uid)
+      :ok = File.chgrp(path, gid)
+      :ok = File.chmod(path, mode)
+    else
+      Mix.shell.info "sudo chown #{uid}#{gid} #{path}"
+      Mix.shell.info "sudo chmod #{Integer.to_string(mode, 8)} #{path}"
+    end
   end
 
   @spec write_template(Keyword.t, Path.t, String.t) :: :ok
