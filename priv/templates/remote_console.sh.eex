@@ -16,10 +16,10 @@ cd "$BASEDIR/current"
 
 export LANG="<%= env_lang %>"
 export MIX_ENV="<%= mix_env %>"
-export RELEASE_MUTABLE_DIR="<%= runtime_path %>"
+export RELEASE_MUTABLE_DIR="<%= runtime_dir %>"
 
 <%= if conform do %>
 export CONFORM_CONF_PATH="<%= conform_conf_path %>"
 <% end %>
 
-"<%= current_path %>/bin/<%= app_name %>" remote_console
+"<%= current_dir %>/bin/<%= app_name %>" remote_console
