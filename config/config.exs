@@ -23,15 +23,15 @@ use Mix.Config
 # config :mix_deploy_local,
 #   deploy_group: "staff"
 
-config :mix_deploy_local,
-  deploy_user: "deploy",
-  deploy_group: "deploy",
-  app_user: "dmpro",
-  app_group: "dmpro",
-  deploy_uid: 1003,
-  deploy_gid: 1005,
-  app_uid: 1006,
-  app_gid: 1007
+# config :mix_deploy_local,
+#   deploy_user: "deploy",
+#   deploy_group: "deploy",
+#   app_user: "foo",
+#   app_group: "foo",
+#   deploy_uid: 1003,
+#   deploy_gid: 1005,
+#   app_uid: 1006,
+#   app_gid: 1007
 
 # It is also possible to import configuration files, relative to this
 # directory. For example, you can emulate configuration per environment
