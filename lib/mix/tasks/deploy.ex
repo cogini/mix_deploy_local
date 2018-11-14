@@ -76,7 +76,7 @@ defmodule Mix.Tasks.Deploy.Local do
 
     build_path = Mix.Project.build_path()
 
-    {{cur_user, cur_uid}, {cur_group, cur_gid}, _} = get_id()
+    {{cur_user, _cur_uid}, {cur_group, _cur_gid}, _} = get_id()
 
     defaults = [
       mix_env: Mix.env(),
