@@ -12,7 +12,7 @@ defmodule MixDeployLocal.Lib do
     :ok
   end
 
-  @spec create_dir(boolean, Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
+  @spec create_dir(boolean, Path.t, {binary, non_neg_integer}, {binary, non_neg_integer}, non_neg_integer) :: :ok
   def create_dir(true, path, uid, gid, mode) do
     Mix.shell.info "# Creating dir #{path}"
     :ok = File.mkdir_p(path)
@@ -24,14 +24,14 @@ defmodule MixDeployLocal.Lib do
     own_file(false, path, uid, gid, mode)
   end
 
-  @spec own_file(boolean, Path.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
-  def own_file(true, path, uid, gid, mode) do
+  @spec own_file(boolean, Path.t, {binary, non_neg_integer}, {binary, non_neg_integer}, non_neg_integer) :: :ok
+  def own_file(true, path, {_user, uid}, {_group, gid}, mode) do
     :ok = File.chown(path, uid)
     :ok = File.chgrp(path, gid)
     :ok = File.chmod(path, mode)
   end
-  def own_file(_, path, uid, gid, mode) do
-    Mix.shell.info "chown #{uid}:#{gid} #{path}"
+  def own_file(_, path, {user, _uid}, {group, _gid}, mode) do
+    Mix.shell.info "chown #{user}:#{group} #{path}"
     Mix.shell.info "chmod #{Integer.to_string(mode, 8)} #{path}"
   end
 

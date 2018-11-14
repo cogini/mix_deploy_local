@@ -1,6 +1,44 @@
 defmodule MixDeployLocal.Os do
   @moduledoc "OS interface functions"
 
+  def get_id do
+    {data, 0} = System.cmd("id", [])
+    [[user], [group], groups] = for pair <- String.split(String.trim(data), " ") do
+      [_name, pairs] = String.split(pair, "=")
+      for pair <- String.split(pairs, ",") do
+        [num, name] = Regex.run(~R/^(\d+)\(([a-zA-Z1-9_.]+)\)$/, pair, capture: :all_but_first)
+        {name, String.to_integer(num)}
+      end
+    end
+    {user, group, groups}
+  end
+
+  def get_uid(name) do
+    get_uid(:os.type(), name)
+  end
+
+  def get_uid({:unix, :linux}, name) do
+    {:ok, info} = get_user_info(name)
+    info.uid
+  end
+  def get_uid({:unix, :darwin}, name) do
+    {:ok, uid} = dscl_read("/Users/#{name}", "PrimaryGroupID")
+    String.to_integer(uid)
+  end
+
+  def get_gid(name) do
+    get_gid(:os.type(), name)
+  end
+
+  def get_gid({:unix, :linux}, name) do
+    {:ok, info} = get_user_info(name)
+    info.uid
+  end
+  def get_gid({:unix, :darwin}, name) do
+    {:ok, gid} = dscl_read("/Groups/#{name}", "PrimaryGroupID")
+    String.to_integer(gid)
+  end
+
   @doc "Get OS user info from /etc/passwd"
   @spec get_user_info(String.t) :: map | :error
   def get_user_info(name) do
@@ -76,5 +114,6 @@ defmodule MixDeployLocal.Os do
   @spec parse_group_members(String.t) :: [String.t]
   defp parse_group_members(""), do: []
   defp parse_group_members(members), do: String.split(members, ",")
+
 
 end

@@ -76,6 +76,8 @@ defmodule Mix.Tasks.Deploy.Local do
 
     build_path = Mix.Project.build_path()
 
+    {{cur_user, cur_uid}, {cur_group, cur_gid}, _} = get_id()
+
     defaults = [
       mix_env: Mix.env(),
       env_lang: "en_US.UTF-8",
@@ -104,7 +106,11 @@ defmodule Mix.Tasks.Deploy.Local do
       template_dir: Path.join("templates", @template_dir),
 
       # OS user to own files and run app
-      deploy_user: System.get_env("USER"),
+      # deploy_user: System.get_env("USER"),
+      deploy_user: cur_user,
+      deploy_group: cur_group,
+      # deploy_uid: cur_uid,
+      # deploy_gid: cur_gid,
 
       # App uses conform
       conform: false,
@@ -158,18 +164,23 @@ defmodule Mix.Tasks.Deploy.Local do
 
     # Default OS user and group names
     cfg = Keyword.merge([
-      deploy_group: cfg[:deploy_group] || cfg[:deploy_user],
-      app_user: cfg[:app_user] || cfg[:deploy_user],
-      app_group: cfg[:app_group] || cfg[:app_user] || cfg[:deploy_group] || cfg[:deploy_user],
+      app_user: cfg[:deploy_user],
+      app_group: cfg[:deploy_group],
     ], cfg)
+
+    cfg = Keyword.merge(cfg, [
+      deploy_uid: cfg[:deploy_uid] || get_uid(cfg[:deploy_user]),
+      deploy_gid: cfg[:deploy_gid] || get_gid(cfg[:deploy_group]),
+      app_uid: cfg[:app_uid] || get_uid(cfg[:app_user]),
+      app_gid: cfg[:app_gid] || get_gid(cfg[:app_group]),
+    ])
 
     # Mix.shell.info "cfg: #{inspect cfg}"
 
-    # Get uid and gid for users, as that's what Elixir chown expects
-    {:ok, %{uid: deploy_uid}} = get_user_info(cfg[:deploy_user])
-    {:ok, %{gid: deploy_gid}} = get_group_info(cfg[:deploy_group])
-    {:ok, %{uid: app_uid}} = get_user_info(cfg[:app_user])
-    {:ok, %{gid: app_gid}} = get_group_info(cfg[:app_group])
+    # {:ok, %{uid: deploy_uid}} = get_user_info(cfg[:deploy_user])
+    # {:ok, %{gid: deploy_gid}} = get_group_info(cfg[:deploy_group])
+    # {:ok, %{uid: app_uid}} = get_user_info(cfg[:app_user])
+    # {:ok, %{gid: app_gid}} = get_group_info(cfg[:app_group])
 
     # Data calculated from other things
     Keyword.merge([
@@ -184,11 +195,6 @@ defmodule Mix.Tasks.Deploy.Local do
       tmp_dir: Path.join(cfg[:tmp_dir_base], cfg[:tmp_dir_name]),
       state_dir: Path.join(cfg[:state_dir_base], cfg[:state_dir_name]),
       cache_dir: Path.join(cfg[:cache_dir_base], cfg[:cache_dir_name]),
-
-      deploy_uid: deploy_uid,
-      deploy_gid: deploy_gid,
-      app_uid: app_uid,
-      app_gid: app_gid,
     ], cfg)
   end
 
@@ -250,42 +256,43 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     ext_name = cfg[:ext_name]
     exec = cfg[:exec]
 
-    deploy_uid = cfg[:deploy_uid]
-    app_uid = cfg[:app_gid]
-    app_gid = cfg[:app_gid]
+    deploy_user = {cfg[:deploy_user], cfg[:deploy_uid]}
+    # deploy_group = {cfg[:deploy_group], cfg[:deploy_gid]}
+    app_user = {cfg[:app_user], cfg[:app_uid]}
+    app_group = {cfg[:app_group], cfg[:app_gid]}
 
-    create_dir(exec, cfg[:deploy_dir],   deploy_uid, app_gid, 0o750)
-    create_dir(exec, cfg[:releases_dir], deploy_uid, app_gid, 0o750)
-    create_dir(exec, cfg[:scripts_dir],  deploy_uid, app_gid, 0o750)
+    create_dir(exec, cfg[:deploy_dir],   deploy_user, app_group, 0o750)
+    create_dir(exec, cfg[:releases_dir], deploy_user, app_group, 0o750)
+    create_dir(exec, cfg[:scripts_dir],  deploy_user, app_group, 0o750)
 
     # Used to trigger restart when deploying a new release
-    create_dir(exec, cfg[:flags_dir],    deploy_uid, app_gid, 0o750) # might need to be 0o770
+    create_dir(exec, cfg[:flags_dir],    deploy_user, app_group, 0o750) # might need to be 0o770
 
     # https://www.freedesktop.org/software/systemd/man/systemd.exec.html#RuntimeDirectory=
 
     # systemd will automatically create directories in newer versions
     if cfg[:systemd_version] < 235 do
       # We always need this, as we use it for RELEASE_MUTABLE_DIR
-      create_dir(exec, cfg[:runtime_dir], app_uid, app_gid, 0o750)
+      create_dir(exec, cfg[:runtime_dir], app_user, app_group, 0o750)
 
       if cfg[:create_conf_dir] do
-        create_dir(exec, cfg[:conf_dir], deploy_uid, app_gid, 0o750)
+        create_dir(exec, cfg[:conf_dir], deploy_user, app_group, 0o750)
       end
       if cfg[:create_logs_dir] do
-        create_dir(exec, cfg[:logs_dir], app_uid, app_gid, 0o700)
+        create_dir(exec, cfg[:logs_dir], app_user, app_group, 0o700)
       end
       if cfg[:create_tmp_dir] do
-        create_dir(exec, cfg[:tmp_dir], app_uid, app_gid, 0o700)
+        create_dir(exec, cfg[:tmp_dir], app_user, app_group, 0o700)
       end
       if cfg[:create_state_dir] do
-        create_dir(exec, cfg[:state_dir], app_uid, app_gid, 0o700)
+        create_dir(exec, cfg[:state_dir], app_user, app_group, 0o700)
       end
       if cfg[:create_cache_dir] do
-        create_dir(exec, cfg[:cache_dir], app_uid, app_gid, 0o700)
+        create_dir(exec, cfg[:cache_dir], app_user, app_group, 0o700)
       end
     end
 
-    copy_template(exec, cfg, cfg[:output_dir], cfg[:scripts_dir], "remote_console.sh", deploy_uid, app_gid, 0o750)
+    copy_template(exec, cfg, cfg[:output_dir], cfg[:scripts_dir], "remote_console.sh", deploy_user, app_group, 0o750)
 
     # Copy systemd files
     if cfg[:systemd] do
