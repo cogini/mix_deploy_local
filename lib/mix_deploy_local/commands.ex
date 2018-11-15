@@ -1,8 +1,20 @@
-defmodule MixDeployLocal.Lib do
-  @moduledoc "Utility functions"
+defmodule MixDeployLocal.Commands do
+  @moduledoc """
+  Deployment commands.
 
+  These functions perform deployment functions like copying files and generating output files from templates.
+
+  Because deployment requres elevated permissions, instead of executing the
+  commands, they can optionally output the shell equivalents. You can capture
+  this in a shell script which you run under sudo.
+  """
+
+  # Name of application, used to find template files
   @app :mix_deploy_local
 
+  @typep name_id() :: {String.t, non_neg_integer}
+
+  @doc "Copy file"
   @spec copy_file(boolean, Path.t, Path.t) :: :ok | {:error, :file.posix()}
   def copy_file(true, src_path, dst_path) do
     File.cp(src_path, dst_path)
@@ -12,6 +24,7 @@ defmodule MixDeployLocal.Lib do
     :ok
   end
 
+  @doc "Create directory"
   @spec create_dir(boolean, Path.t, {binary, non_neg_integer}, {binary, non_neg_integer}, non_neg_integer) :: :ok
   def create_dir(true, path, uid, gid, mode) do
     Mix.shell.info "# Creating dir #{path}"
@@ -24,6 +37,7 @@ defmodule MixDeployLocal.Lib do
     own_file(false, path, uid, gid, mode)
   end
 
+  @doc "Set file ownership and permissions"
   @spec own_file(boolean, Path.t, {binary, non_neg_integer}, {binary, non_neg_integer}, non_neg_integer) :: :ok
   def own_file(true, path, {_user, uid}, {_group, gid}, mode) do
     :ok = File.chown(path, uid)
@@ -35,21 +49,25 @@ defmodule MixDeployLocal.Lib do
     Mix.shell.info "chmod #{Integer.to_string(mode, 8)} #{path}"
   end
 
+  @doc "Enable systemd unit"
+  @spec enable_systemd_unit(boolean, String.t) :: :ok
   def enable_systemd_unit(true, name) do
     {_, 0} = System.cmd("systemctl", ["enable", name])
+    :ok
   end
   def enable_systemd_unit(_, name) do
     Mix.shell.info "systemctl enable #{name}"
+    :ok
   end
 
   @doc "Generate file from template to build_path, then copy to target"
-  @spec copy_template(boolean, Keyword.t, Path.t, Path.t, String.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
-  def copy_template(exec, vars, dest, path, template, uid, gid, mode) do
-    copy_template(exec, vars, dest, path, template, template, uid, gid, mode)
+  @spec copy_template(boolean, Keyword.t, Path.t, Path.t, String.t, name_id(), name_id(), non_neg_integer) :: :ok
+  def copy_template(exec, vars, dest, path, template, user, group, mode) do
+    copy_template(exec, vars, dest, path, template, template, user, group, mode)
   end
 
-  @spec copy_template(boolean, Keyword.t, Path.t, Path.t, String.t, String.t, non_neg_integer, non_neg_integer, non_neg_integer) :: :ok
-  def copy_template(exec, vars, dest, path, template, file, uid, gid, mode) do
+  @spec copy_template(boolean, Keyword.t, Path.t, Path.t, String.t, String.t, name_id(), name_id(), non_neg_integer) :: :ok
+  def copy_template(exec, vars, dest, path, template, file, user, group, mode) do
     output_dir = Path.join(dest, path)
     output_file = Path.join(output_dir, file)
     target_file = Path.join(path, file)
@@ -60,9 +78,10 @@ defmodule MixDeployLocal.Lib do
     :ok = File.write(output_file, data)
 
     :ok = copy_file(exec, output_file, target_file)
-    own_file(exec, target_file, uid, gid, mode)
+    own_file(exec, target_file, user, group, mode)
   end
 
+  @doc "Generate file from template"
   @spec write_template(Keyword.t, Path.t, String.t) :: :ok
   def write_template(vars, target_path, template) do
     write_template(vars, target_path, template, template)
@@ -76,6 +95,7 @@ defmodule MixDeployLocal.Lib do
     :ok = File.write(target_file, data)
   end
 
+  @doc "Find template matching name and eval"
   @spec template_name(Path.t, Keyword.t) :: {:ok, String.t} | {:error, term}
   def template_name(name, vars \\ []) do
     template_file = "#{name}.eex"
@@ -89,10 +109,10 @@ defmodule MixDeployLocal.Lib do
     end
   end
 
-  @doc "Eval template with params"
+  @doc "Evaluate template file with bindings"
   @spec template_file(String.t, Keyword.t) :: {:ok, String.t} | {:error, term}
-  def template_file(template_file, params \\ []) do
-    {:ok, EEx.eval_file(template_file, params, [trim: true])}
+  def template_file(template_file, bindings \\ []) do
+    {:ok, EEx.eval_file(template_file, bindings, [trim: true])}
   rescue
     e ->
       {:error, {:template, e}}

@@ -8,7 +8,7 @@ defmodule Mix.Tasks.Deploy.Local do
   `/srv/:app/releases/20170619175601`, then makes a symlink
   from `/srv/:app/current` to it.
 
-  This module looks for configuration in the mix project, to get the app and version
+  This module looks for configuration in the mix project, to get the app and version,
   and under the application environment under `mix_deploy_local`.
 
   * `base_dir` sets the base directory, default `/srv`.
@@ -18,12 +18,16 @@ defmodule Mix.Tasks.Deploy.Local do
 
   use Mix.Task
 
-  import MixDeployLocal.Os
+  alias MixDeployLocal.User
 
+  # Name of app, used to get info from application environment
   @app :mix_deploy_local
 
-  # Location under build directory
-  @template_dir "mix_deploy_local"
+  # Name of directory under build directory where module stores generated files
+  @output_dir "mix_deploy_local"
+
+  # Name of directory where user can override templates
+  @template_override_dir "mix_deploy_local"
 
   @spec run(OptionParser.argv()) :: no_return
   def run(args) do
@@ -32,7 +36,7 @@ defmodule Mix.Tasks.Deploy.Local do
     deploy_release(config)
   end
 
-  @spec deploy_release(Keyword.t) :: :ok
+  @spec deploy_release(Keyword.t) :: no_return
   def deploy_release(cfg) do
     release_dir = Path.join(cfg[:releases_dir], create_timestamp())
     Mix.shell.info "Deploying release to #{release_dir}"
@@ -41,7 +45,7 @@ defmodule Mix.Tasks.Deploy.Local do
     app = to_string(cfg[:app_name])
     tar_file = Path.join([cfg[:build_path], "rel", app, "releases", cfg[:version], "#{app}.tar.gz"])
     Mix.shell.info "Extracting tar #{tar_file}"
-    :ok = :erl_tar.extract(tar_file, [{:cwd, release_dir}, :compressed])
+    :ok = :erl_tar.extract(to_charlist(tar_file), [{:cwd, release_dir}, :compressed])
 
     current_link = cfg[:current_path]
     if File.exists?(current_link) do
@@ -56,6 +60,7 @@ defmodule Mix.Tasks.Deploy.Local do
     timestamp |> List.flatten |> to_string
   end
 
+  @spec parse_args(OptionParser.argv()) :: Keyword.t
   def parse_args(argv) do
     opts = [
       strict: [
@@ -76,10 +81,12 @@ defmodule Mix.Tasks.Deploy.Local do
 
     build_path = Mix.Project.build_path()
 
-    {{cur_user, _cur_uid}, {cur_group, _cur_gid}, _} = get_id()
+    {{cur_user, _cur_uid}, {cur_group, _cur_gid}, _} = User.get_id()
 
     defaults = [
       mix_env: Mix.env(),
+
+      # LANG environment var for running scripts
       env_lang: "en_US.UTF-8",
 
       # Elixir application name
@@ -97,44 +104,45 @@ defmodule Mix.Tasks.Deploy.Local do
       # Directory for release files on target
       deploy_dir: "#{base_dir}/#{ext_name}",
 
+      # Mix build_path
       build_path: build_path,
 
       # Staging output directory for generated files
-      output_dir: Path.join(build_path, @template_dir),
+      output_dir: Path.join(build_path, @output_dir),
 
       # Directory with templates which override defaults
-      template_dir: Path.join("templates", @template_dir),
+      template_dir: Path.join("templates", @template_override_dir),
 
       # OS user to own files and run app
-      # deploy_user: System.get_env("USER"),
       deploy_user: cur_user,
       deploy_group: cur_group,
-      # deploy_uid: cur_uid,
-      # deploy_gid: cur_gid,
 
-      # App uses conform
+      # Whether app uses conform
       conform: false,
       conform_conf_path: "/etc/#{ext_name}/#{app_name}.conf",
 
-      # App uses mix_systemd
-      systemd: false,
+      # Whether app uses mix_systemd
+      mix_systemd: false,
+      # Target systemd version
       systemd_version: 219, # CentOS 7
       # systemd_version: 229, # Ubuntu 16.04
 
-      # Create /etc/suders.d config file allowing deploy or app user to restart
+      # Whether to create /etc/suders.d file allowing deploy or app user to restart app
       sudo_deploy: false,
       sudo_app: false,
 
       # Execute priviliged commands to modify target system, otherwise generate shell commands
-      exec: false,
+      exec_commands: false,
 
       # These directories may be automatically created by newer versions of
-      # systemd, otherwise we need to create them if necessary
+      # systemd, otherwise we need to create them the app uses them
 
+      # We use runtime_dir as RELEASE_MUTABLE_DIR
       create_runtime_dir: true,
       runtime_dir_name: ext_name,
       runtime_dir_base: "/run",
 
+      # Enable if using conform
       create_conf_dir: false,
       conf_dir_name: ext_name,
       conf_dir_base: "/etc",
@@ -169,18 +177,13 @@ defmodule Mix.Tasks.Deploy.Local do
     ], cfg)
 
     cfg = Keyword.merge(cfg, [
-      deploy_uid: cfg[:deploy_uid] || get_uid(cfg[:deploy_user]),
-      deploy_gid: cfg[:deploy_gid] || get_gid(cfg[:deploy_group]),
-      app_uid: cfg[:app_uid] || get_uid(cfg[:app_user]),
-      app_gid: cfg[:app_gid] || get_gid(cfg[:app_group]),
+      deploy_uid: cfg[:deploy_uid] || User.get_uid(cfg[:deploy_user]),
+      deploy_gid: cfg[:deploy_gid] || User.get_gid(cfg[:deploy_group]),
+      app_uid: cfg[:app_uid] || User.get_uid(cfg[:app_user]),
+      app_gid: cfg[:app_gid] || User.get_gid(cfg[:app_group]),
     ])
 
     # Mix.shell.info "cfg: #{inspect cfg}"
-
-    # {:ok, %{uid: deploy_uid}} = get_user_info(cfg[:deploy_user])
-    # {:ok, %{gid: deploy_gid}} = get_group_info(cfg[:deploy_group])
-    # {:ok, %{uid: app_uid}} = get_user_info(cfg[:app_user])
-    # {:ok, %{gid: app_gid}} = get_group_info(cfg[:app_group])
 
     # Data calculated from other things
     Keyword.merge([
@@ -216,20 +219,20 @@ defmodule Mix.Tasks.Deploy.Local.Rollback do
   end
 
   @spec rollback([Path.t], Keyword.t) :: :ok
-  def rollback([_current, prev | _rest], cfg) do
+  defp rollback([_current, prev | _rest], cfg) do
     release_path = Path.join(cfg[:releases_path], prev)
     current_dir = cfg[:current_dir]
     Mix.shell.info "Making link from #{release_path} to #{current_dir}"
     :ok = remove_link(current_dir)
     :ok = File.ln_s(release_path, current_dir)
   end
-  def rollback(dirs, _cfg) do
+  defp rollback(dirs, _cfg) do
     Mix.shell.info "Nothing to roll back to: releases = #{inspect dirs}"
     :ok
   end
 
   @spec remove_link(Path.t) :: :ok | {:error, :file.posix()}
-  def remove_link(current_path) do
+  defp remove_link(current_path) do
     case File.read_link(current_path) do
       {:ok, target} ->
         Mix.shell.info "Removing link from #{target} to #{current_path}"
@@ -246,15 +249,16 @@ defmodule Mix.Tasks.Deploy.Local.Init do
 
   use Mix.Task
 
+  # Directory under build_path where mix_systemd keeps its files
   @mix_systemd_dir "systemd"
 
-  import MixDeployLocal.Lib
+  import MixDeployLocal.Commands
 
   def run(args) do
     cfg = Mix.Tasks.Deploy.Local.parse_args(args)
 
     ext_name = cfg[:ext_name]
-    exec = cfg[:exec]
+    exec = cfg[:exec_commands]
 
     deploy_user = {cfg[:deploy_user], cfg[:deploy_uid]}
     # deploy_group = {cfg[:deploy_group], cfg[:deploy_gid]}
@@ -295,7 +299,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     copy_template(exec, cfg, cfg[:output_dir], cfg[:scripts_dir], "remote_console.sh", deploy_user, app_group, 0o750)
 
     # Copy systemd files
-    if cfg[:systemd] do
+    if cfg[:mix_systemd] do
       systemd_src_dir = Path.join([cfg[:build_path], @mix_systemd_dir, "/lib/systemd/system"])
       {:ok, files} = File.ls(systemd_src_dir)
       for file <- files do
@@ -303,14 +307,14 @@ defmodule Mix.Tasks.Deploy.Local.Init do
         dst_file = Path.join("/lib/systemd/system", file)
         Mix.shell.info "# Copying systemd unit from #{src_file} to #{dst_file}"
         :ok = copy_file(exec, src_file, dst_file)
-        own_file(exec, dst_file, 0, 0, 0o644)
+        own_file(exec, dst_file, {"root", 0}, {"root", 0}, 0o644)
         enable_systemd_unit(exec, file)
       end
     end
 
     # Generate /etc/sudoers.d config
     if cfg[:sudo_deploy] or cfg[:sudo_app] do
-      copy_template(exec, cfg, "/etc/sudoers.d", ext_name, "sudoers", 0, 0, 0o600)
+      copy_template(exec, cfg, "/etc/sudoers.d", ext_name, "sudoers", {"root", 0}, {"root", 0}, 0o600)
     end
   end
 
