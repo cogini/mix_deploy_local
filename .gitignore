@@ -22,3 +22,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 mix_deploy_local-*.tar
 
+/rel/templates/
+/bin/deploy
+/bin/remote_console

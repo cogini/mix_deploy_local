@@ -23,6 +23,11 @@ use Mix.Config
 # config :mix_deploy_local,
 #   deploy_group: "staff"
 
+config :mix_deploy_local,
+  deploy_group: "staff",
+  sudo_deploy: true,
+  sudo_app: true
+
 # config :mix_deploy_local,
 #   deploy_user: "deploy",
 #   deploy_group: "deploy",

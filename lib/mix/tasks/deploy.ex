@@ -1,3 +1,258 @@
+defmodule Mix.Tasks.Deploy do
+
+  # Name of app, used to get config from app environment
+  @app :mix_deploy_local
+
+  # Directory under build directory where module stores generated files
+  @output_dir "deploy"
+
+  # Name of directory where user can override templates
+  @template_dir "rel/templates/deploy"
+
+  alias MixDeployLocal.User
+
+  @spec parse_args(OptionParser.argv()) :: Keyword.t
+  def parse_args(argv) do
+    opts = [
+      strict: [
+        version: :string,
+      ]
+    ]
+    {overrides, _} = OptionParser.parse!(argv, opts)
+
+    mix_config = Mix.Project.config()
+    user_config = Application.get_all_env(@app)
+
+    app_name = mix_config[:app]
+    ext_name = app_name
+               |> to_string
+               |> String.replace("_", "-")
+    service_name = ext_name
+
+    base_dir = user_config[:base_dir] || "/srv"
+
+    build_path = Mix.Project.build_path()
+
+    {{cur_user, _cur_uid}, {cur_group, _cur_gid}, _} = User.get_id()
+
+    defaults = [
+      mix_env: Mix.env(),
+
+      # LANG environment var for running scripts
+      env_lang: "en_US.UTF-8",
+
+      # Elixir application name
+      app_name: app_name,
+
+      # Name of directories
+      ext_name: ext_name,
+
+      # Name of service
+      service_name: ext_name,
+
+      # App version
+      version: mix_config[:version],
+
+      # Base directory on target system
+      base_dir: base_dir,
+
+      # Directory for release files on target
+      deploy_dir: "#{base_dir}/#{ext_name}",
+
+      # Mix build_path
+      build_path: build_path,
+
+      # Staging output directory for generated files
+      output_dir: Path.join(build_path, @output_dir),
+
+      # Directory with templates which override defaults
+      template_dir: @template_dir,
+
+      # OS user to own files and run app
+      deploy_user: cur_user,
+      deploy_group: cur_group,
+
+      # Whether app uses conform
+      conform: false,
+      conform_conf_path: "/etc/#{ext_name}/#{app_name}.conf",
+
+      # Target systemd version
+      systemd_version: 219, # CentOS 7
+      # systemd_version: 229, # Ubuntu 16.04
+
+      # Whether to create /etc/suders.d file allowing deploy or app user to restart app
+      sudo_deploy: false,
+      sudo_app: false,
+
+      # Execute priviliged commands to modify target system, otherwise generate shell commands
+      exec_commands: false,
+
+      # These directories may be automatically created by newer versions of
+      # systemd, otherwise we need to create them the app uses them
+      cache_directory: service_name,
+      cache_directory_base: "/var/cache",
+      cache_directory_mode: "750",
+      configuration_directory: service_name,
+      configuration_directory_base: "/etc",
+      configuration_directory_mode: "750",
+      logs_directory: service_name,
+      logs_directory_base: "/var/log",
+      logs_directory_mode: "750",
+      runtime_directory: service_name,
+      runtime_directory_base: "/run",
+      runtime_directory_mode: "750",
+      runtime_directory_preserve: "no",
+      state_directory: service_name,
+      state_directory_base: "/var/lib",
+      state_directory_mode: "750",
+      tmp_directory: service_name,
+      tmp_directory_base: "/var/tmp",
+      tmp_directory_mode: "750",
+
+      restart_method: :systemd_flag, # :systemd_flag | :systemctl | :touch
+    ]
+
+    cfg = defaults
+             |> Keyword.merge(user_config)
+             |> Keyword.merge(overrides)
+
+    # Default OS user and group names
+    cfg = Keyword.merge([
+      app_user: cfg[:deploy_user],
+      app_group: cfg[:deploy_group],
+    ], cfg)
+
+    cfg = Keyword.merge(cfg, [
+      deploy_uid: cfg[:deploy_uid] || User.get_uid(cfg[:deploy_user]),
+      deploy_gid: cfg[:deploy_gid] || User.get_gid(cfg[:deploy_group]),
+      app_uid: cfg[:app_uid] || User.get_uid(cfg[:app_user]),
+      app_gid: cfg[:app_gid] || User.get_gid(cfg[:app_group]),
+    ])
+
+    # Mix.shell.info "cfg: #{inspect cfg}"
+
+    # Data calculated from other things
+    Keyword.merge([
+      releases_dir: Path.join(cfg[:deploy_dir], "releases"),
+      scripts_dir: Path.join(cfg[:deploy_dir], "bin"),
+      flags_dir: Path.join(cfg[:deploy_dir], "flags"),
+      current_dir: Path.join(cfg[:deploy_dir], "current"),
+
+      runtime_dir: Path.join(cfg[:runtime_directory_base], cfg[:runtime_directory]),
+      configuration_dir: Path.join(cfg[:configuration_directory_base], cfg[:configuration_directory]),
+      logs_dir: Path.join(cfg[:logs_directory_base], cfg[:logs_directory]),
+      tmp_dir: Path.join(cfg[:tmp_directory_base], cfg[:tmp_directory]),
+      state_dir: Path.join(cfg[:state_directory_base], cfg[:state_directory]),
+      cache_dir: Path.join(cfg[:cache_directory_base], cfg[:cache_directory]),
+    ], cfg)
+  end
+end
+
+defmodule Mix.Tasks.Deploy.Init do
+  @moduledoc """
+  Initialize template files.
+
+  ## Command line options
+
+    * `--template_dir` - target directory
+
+  ## Usage
+
+      # Copy default templates into your project
+      mix systemd.init
+  """
+  @shortdoc "Initialize template files"
+  use Mix.Task
+
+  @app :mix_deploy_local
+
+  @spec run(OptionParser.argv()) :: no_return
+  def run(args) do
+    cfg = Mix.Tasks.Deploy.parse_args(args)
+
+    template_dir = cfg[:template_dir]
+    app_dir = Application.app_dir(@app, ["priv", "templates"])
+
+    :ok = File.mkdir_p(template_dir)
+    {:ok, _files} = File.cp_r(app_dir, template_dir)
+  end
+
+end
+
+defmodule Mix.Tasks.Deploy.Generate do
+  @moduledoc """
+  Create deploy scripts and files for project.
+
+  ## Usage
+
+      # Create scripts and files for MIX_ENV=dev (the default)
+      mix systemd.generate
+
+      # Create unit files for prod
+      MIX_ENV=prod mix systemd.generate
+  """
+  @shortdoc "Create deploy scripts and files"
+  use Mix.Task
+
+  alias MixDeployLocal.Templates
+  import MixDeployLocal.Commands
+
+  @spec run(OptionParser.argv()) :: no_return
+  def run(args) do
+    cfg = Mix.Tasks.Deploy.parse_args(args)
+    ext_name = cfg[:ext_name]
+    output_dir = cfg[:output_dir]
+
+    deploy_user = cfg[:deploy_user]
+    # deploy_group = cfg[:deploy_group]
+    app_user = cfg[:app_user]
+    app_group = cfg[:app_group]
+
+    dirs = [
+      {cfg[:deploy_dir], deploy_user, app_group, 0o750, "Base dir"},
+      {cfg[:releases_dir], deploy_user, app_group, 0o750, "Releases"},
+      {cfg[:scripts_dir], deploy_user, app_group, 0o750, "Target scripts"},
+      {cfg[:flags_dir], deploy_user, app_group, 0o750, "Trigger restart when deploying new release"}, # maybe 0o770
+    ] ++
+    if cfg[:systemd_version] < 235 do
+      [
+        # https://www.freedesktop.org/software/systemd/man/systemd.exec.html#RuntimeDirectory=
+        # systemd will automatically create directories in newer versions
+
+        # We always need runtime dir, as we use it for RELEASE_MUTABLE_DIR
+        {cfg[:runtime_dir], app_user, app_group, 0o750, "systemd RuntimeDirectory"},
+        {cfg[:configuration_dir], deploy_user, app_group, 0o750, "systemd ConfigurationDirectory"},
+
+        {cfg[:logs_dir], app_user, app_group, 0o700, "systemd LogsDirectory"},
+        {cfg[:state_dir], app_user, app_group, 0o700, "systemd StateDirectory"},
+        {cfg[:cache_dir], app_user, app_group, 0o700, "systemd CacheDirectory"},
+
+        # Better handled by PrivateTmp in newer systemd
+        {cfg[:tmp_dir], app_user, app_group, 0o700, "Temp directory"},
+      ]
+    else
+      []
+    end
+
+    # root:root 700, run by root on install
+    write_template(cfg ++ [create_dirs: dirs], "bin", "deploy", "deploy")
+
+    # deploy_user:app_group 0o750
+    write_template(cfg, "bin", "remote_console", "remote_console")
+
+    if cfg[:sudo_deploy] or cfg[:sudo_app] do
+      # root:root 0600
+      write_template(cfg, Path.join(output_dir, "/etc/sudoers.d"), "sudoers", ext_name)
+    end
+  end
+
+  defp write_template(cfg, dest_dir, template, file) do
+    target_file = Path.join(dest_dir, file)
+    Mix.shell.info "Generating #{target_file} from template #{template}"
+    Templates.write_template(cfg, dest_dir, template, file)
+  end
+end
+
 defmodule Mix.Tasks.Deploy.Local do
   @shortdoc "Deploy release to local machine"
 
@@ -18,21 +273,10 @@ defmodule Mix.Tasks.Deploy.Local do
 
   use Mix.Task
 
-  alias MixDeployLocal.User
-
-  # Name of app, used to get info from application environment
-  @app :mix_deploy_local
-
-  # Name of directory under build directory where module stores generated files
-  @output_dir "mix_deploy_local"
-
-  # Name of directory where user can override templates
-  @template_override_dir "mix_deploy_local"
-
   @spec run(OptionParser.argv()) :: no_return
   def run(args) do
     # IO.puts (inspect args)
-    config = parse_args(args)
+    config = Mix.Tasks.Deploy.parse_args(args)
     deploy_release(config)
   end
 
@@ -60,147 +304,6 @@ defmodule Mix.Tasks.Deploy.Local do
     timestamp |> List.flatten |> to_string
   end
 
-  @spec parse_args(OptionParser.argv()) :: Keyword.t
-  def parse_args(argv) do
-    opts = [
-      strict: [
-        version: :string,
-      ]
-    ]
-    {overrides, _} = OptionParser.parse!(argv, opts)
-
-    mix_config = Mix.Project.config()
-    user_config = Application.get_all_env(@app)
-
-    app_name = mix_config[:app]
-    ext_name = app_name
-               |> to_string
-               |> String.replace("_", "-")
-
-    base_dir = user_config[:base_dir] || "/srv"
-
-    build_path = Mix.Project.build_path()
-
-    {{cur_user, _cur_uid}, {cur_group, _cur_gid}, _} = User.get_id()
-
-    defaults = [
-      mix_env: Mix.env(),
-
-      # LANG environment var for running scripts
-      env_lang: "en_US.UTF-8",
-
-      # Elixir application name
-      app_name: app_name,
-
-      # Name of service files and directories
-      ext_name: ext_name,
-
-      # App version
-      version: mix_config[:version],
-
-      # Base directory on target system
-      base_dir: base_dir,
-
-      # Directory for release files on target
-      deploy_dir: "#{base_dir}/#{ext_name}",
-
-      # Mix build_path
-      build_path: build_path,
-
-      # Staging output directory for generated files
-      output_dir: Path.join(build_path, @output_dir),
-
-      # Directory with templates which override defaults
-      template_dir: Path.join("templates", @template_override_dir),
-
-      # OS user to own files and run app
-      deploy_user: cur_user,
-      deploy_group: cur_group,
-
-      # Whether app uses conform
-      conform: false,
-      conform_conf_path: "/etc/#{ext_name}/#{app_name}.conf",
-
-      # Whether app uses mix_systemd
-      mix_systemd: false,
-      # Target systemd version
-      systemd_version: 219, # CentOS 7
-      # systemd_version: 229, # Ubuntu 16.04
-
-      # Whether to create /etc/suders.d file allowing deploy or app user to restart app
-      sudo_deploy: false,
-      sudo_app: false,
-
-      # Execute priviliged commands to modify target system, otherwise generate shell commands
-      exec_commands: false,
-
-      # These directories may be automatically created by newer versions of
-      # systemd, otherwise we need to create them the app uses them
-
-      # We use runtime_dir as RELEASE_MUTABLE_DIR
-      create_runtime_dir: true,
-      runtime_dir_name: ext_name,
-      runtime_dir_base: "/run",
-
-      # Enable if using conform
-      create_conf_dir: false,
-      conf_dir_name: ext_name,
-      conf_dir_base: "/etc",
-
-      create_logs_dir: false,
-      logs_dir_name: ext_name,
-      logs_dir_base: "/var/log",
-
-      create_tmp_dir: false,
-      tmp_dir_name: ext_name,
-      tmp_dir_base: "/var/tmp",
-
-      create_state_dir: false,
-      state_dir_name: ext_name,
-      state_dir_base: "/var/lib",
-
-      create_cache_dir: false,
-      cache_dir_name: ext_name,
-      cache_dir_base: "/var/cache",
-
-      restart_method: :systemd_flag, # :systemd_flag | :systemctl | :touch
-    ]
-
-    cfg = defaults
-             |> Keyword.merge(user_config)
-             |> Keyword.merge(overrides)
-
-    # Default OS user and group names
-    cfg = Keyword.merge([
-      app_user: cfg[:deploy_user],
-      app_group: cfg[:deploy_group],
-    ], cfg)
-
-    cfg = Keyword.merge(cfg, [
-      deploy_uid: cfg[:deploy_uid] || User.get_uid(cfg[:deploy_user]),
-      deploy_gid: cfg[:deploy_gid] || User.get_gid(cfg[:deploy_group]),
-      app_uid: cfg[:app_uid] || User.get_uid(cfg[:app_user]),
-      app_gid: cfg[:app_gid] || User.get_gid(cfg[:app_group]),
-    ])
-
-    # Mix.shell.info "cfg: #{inspect cfg}"
-
-    # Data calculated from other things
-    Keyword.merge([
-      releases_dir: Path.join(cfg[:deploy_dir], "releases"),
-      scripts_dir: Path.join(cfg[:deploy_dir], "scripts"),
-      flags_dir: Path.join(cfg[:deploy_dir], "flags"),
-      current_dir: Path.join(cfg[:deploy_dir], "current"),
-
-      runtime_dir: Path.join(cfg[:runtime_dir_base], cfg[:runtime_dir_name]),
-      conf_dir: Path.join(cfg[:conf_dir_base], cfg[:conf_dir_name]),
-      logs_dir: Path.join(cfg[:logs_dir_base], cfg[:logs_dir_name]),
-      tmp_dir: Path.join(cfg[:tmp_dir_base], cfg[:tmp_dir_name]),
-      state_dir: Path.join(cfg[:state_dir_base], cfg[:state_dir_name]),
-      cache_dir: Path.join(cfg[:cache_dir_base], cfg[:cache_dir_name]),
-    ], cfg)
-  end
-
 end
 
 defmodule Mix.Tasks.Deploy.Local.Rollback do
@@ -211,7 +314,7 @@ defmodule Mix.Tasks.Deploy.Local.Rollback do
   use Mix.Task
 
   def run(args) do
-    cfg = Mix.Tasks.Deploy.Local.parse_args(args)
+    cfg = Mix.Tasks.Deploy.parse_args(args)
 
     dirs = cfg[:releases_path] |> File.ls! |> Enum.sort |> Enum.reverse
 
@@ -255,7 +358,7 @@ defmodule Mix.Tasks.Deploy.Local.Init do
   import MixDeployLocal.Commands
 
   def run(args) do
-    cfg = Mix.Tasks.Deploy.Local.parse_args(args)
+    cfg = Mix.Tasks.Deploy.parse_args(args)
 
     ext_name = cfg[:ext_name]
     exec = cfg[:exec_commands]
@@ -299,17 +402,15 @@ defmodule Mix.Tasks.Deploy.Local.Init do
     copy_template(exec, cfg, cfg[:output_dir], cfg[:scripts_dir], "remote_console.sh", deploy_user, app_group, 0o750)
 
     # Copy systemd files
-    if cfg[:mix_systemd] do
-      systemd_src_dir = Path.join([cfg[:build_path], @mix_systemd_dir, "/lib/systemd/system"])
-      {:ok, files} = File.ls(systemd_src_dir)
-      for file <- files do
-        src_file = Path.join(systemd_src_dir, file)
-        dst_file = Path.join("/lib/systemd/system", file)
-        Mix.shell.info "# Copying systemd unit from #{src_file} to #{dst_file}"
-        :ok = copy_file(exec, src_file, dst_file)
-        own_file(exec, dst_file, {"root", 0}, {"root", 0}, 0o644)
-        enable_systemd_unit(exec, file)
-      end
+    systemd_src_dir = Path.join([cfg[:build_path], @mix_systemd_dir, "/lib/systemd/system"])
+    {:ok, files} = File.ls(systemd_src_dir)
+    for file <- files do
+      src_file = Path.join(systemd_src_dir, file)
+      dst_file = Path.join("/lib/systemd/system", file)
+      Mix.shell.info "# Copying systemd unit from #{src_file} to #{dst_file}"
+      :ok = copy_file(exec, src_file, dst_file)
+      own_file(exec, dst_file, {"root", 0}, {"root", 0}, 0o644)
+      enable_systemd_unit(exec, file)
     end
 
     # Generate /etc/sudoers.d config

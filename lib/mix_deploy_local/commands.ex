@@ -9,8 +9,7 @@ defmodule MixDeployLocal.Commands do
   this in a shell script which you run under sudo.
   """
 
-  # Name of application, used to find template files
-  @app :mix_deploy_local
+  alias MixDeployLocal.Templates
 
   @typep name_id() :: {String.t, non_neg_integer}
 
@@ -74,48 +73,10 @@ defmodule MixDeployLocal.Commands do
 
     Mix.shell.info "# Creating file #{target_file} from template #{template}"
     :ok = File.mkdir_p(output_dir)
-    {:ok, data} = template_name(template, vars)
+    {:ok, data} = Templates.template_name(template, vars)
     :ok = File.write(output_file, data)
 
     :ok = copy_file(exec, output_file, target_file)
     own_file(exec, target_file, user, group, mode)
   end
-
-  @doc "Generate file from template"
-  @spec write_template(Keyword.t, Path.t, String.t) :: :ok
-  def write_template(vars, target_path, template) do
-    write_template(vars, target_path, template, template)
-  end
-
-  @spec write_template(Keyword.t, Path.t, String.t, Path.t) :: :ok
-  def write_template(vars, target_path, template, filename) do
-    target_file = Path.join(target_path, filename)
-    :ok = File.mkdir_p(target_path)
-    {:ok, data} = template_name(template, vars)
-    :ok = File.write(target_file, data)
-  end
-
-  @doc "Find template matching name and eval"
-  @spec template_name(Path.t, Keyword.t) :: {:ok, String.t} | {:error, term}
-  def template_name(name, vars \\ []) do
-    template_file = "#{name}.eex"
-    override_file = Path.join(vars[:template_dir], template_file)
-    if File.exists?(override_file) do
-      template_file(override_file)
-    else
-      Application.app_dir(@app, ["priv", "templates"])
-      |> Path.join(template_file)
-      |> template_file(vars)
-    end
-  end
-
-  @doc "Evaluate template file with bindings"
-  @spec template_file(String.t, Keyword.t) :: {:ok, String.t} | {:error, term}
-  def template_file(template_file, bindings \\ []) do
-    {:ok, EEx.eval_file(template_file, bindings, [trim: true])}
-  rescue
-    e ->
-      {:error, {:template, e}}
-  end
-
 end
